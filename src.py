@@ -18,6 +18,7 @@ class RequestValidator(Schema):
     parameter = fields.Str(required=False, validate=OneOf(('co', 'no2', 'o3', 'so2')))
     limit = fields.Int(required=False, validate=Range(min=1, max=10000))
     radius = fields.Int(required=False, validate=Range(min=1, max=10000))
+    agg_sensors = fields.Boolean(required=False)
 
 
 def unpack_query_parameters(event):
@@ -31,7 +32,8 @@ def unpack_query_parameters(event):
     parameter = event.get('queryStringParameters').get('parameter') or 'no2'
     radius = event.get('queryStringParameters').get('radius') or 2500
     limit = event.get('queryStringParameters').get('limit') or 1000
-    return lat, lon, limit, radius, parameter
+    aggregrate_sensors = 1 if event.get('queryStringParameters').get('agg_sensors') == '1' else 0
+    return lat, lon, limit, radius, parameter, aggregrate_sensors
 
 
 def retrieve_measurement(uri, lat, lon):
@@ -71,6 +73,29 @@ def aggregate_by_day(results):
     """
     date_vals = [[i['date']['utc'].split('T')[0], float(i['value'])] for i in results]
     openaq_df = pd.DataFrame(date_vals, columns=['date', 'openaq_val'])
+
+    # Drop invalid data
+    openaq_df = openaq_df[openaq_df['openaq_val'] > -1]
     openaq_daily_mean = openaq_df.groupby('date').mean().reset_index()
     openaq_daily_mean['date'] = pd.to_datetime(openaq_daily_mean['date'])
     return openaq_daily_mean
+
+
+def aggregate_by_day_and_sensor(results):
+    """
+    Average the results from openaq by day
+    :param results: results from the openaq query
+    :return: pandas dataframe of date, sensor id and mean value
+    """
+    date_vals_by_location = [
+        [i['location'], i['coordinates'], i['unit'], i['date']['utc'].split('T')[0], float(i['value'])] for i in
+        results]
+    openaq_df_by_location = pd.DataFrame(date_vals_by_location,
+                                         columns=['location_name', 'coordinates', 'unit', 'date', 'openaq_val'])
+
+    # Drop invalid data
+    openaq_df_by_location = openaq_df_by_location[openaq_df_by_location['openaq_val'] > -1]
+
+    openaq_daily_mean_by_location = openaq_df_by_location.groupby(['date', 'location_name']).mean().reset_index()
+    openaq_daily_mean_by_location['date'] = pd.to_datetime(openaq_daily_mean_by_location['date'])
+    return openaq_daily_mean_by_location
